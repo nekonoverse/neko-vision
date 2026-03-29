@@ -1,0 +1,40 @@
+# neko-vision — Ollama連携画像自動タグ付け/キャプション生成マイクロサービス
+#
+# Usage:
+#   cp docker-compose.yml.example docker-compose.yml
+#   docker compose up -d
+#   # Ollamaが起動したらモデルをpull:
+#   docker compose exec ollama ollama pull gemma3:4b
+#
+# Requires: NVIDIA GPU + nvidia-container-toolkit (Ollama用)
+#
+# Connect from the main Nekonoverse server:
+#   NEKO_VISION_URL=http://<this-machine>:8004/tag
+
+services:
+  neko-vision:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8004:8004"
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: gemma3:4b
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  ollama-data:
