@@ -144,6 +144,7 @@ class TagRequest(BaseModel):
     context: list[str] | None = Field(
         default=None, description="リプライツリーの親ノート本文（古い順）"
     )
+    file_id: str | None = Field(default=None, description="呼び出し元のファイルID（ログ用）")
 
 
 class TagResponse(BaseModel):
@@ -165,6 +166,8 @@ async def tag_image(request: TagRequest):
     prompt = _build_prompt(request.text, request.context)
     mime = _detect_mime(image_data)
     image_url = f"data:{mime};base64,{request.image}"
+    fid = request.file_id or "unknown"
+    size_kb = len(image_data) // 1024
     last_error = None
 
     for attempt in range(MAX_RETRIES + 1):
@@ -195,20 +198,23 @@ async def tag_image(request: TagRequest):
                 if resp.status_code == 400:
                     # 画像デコード失敗等のクライアントエラーはリトライしても無駄
                     body = resp.text[:500]
-                    logger.warning("画像処理不可 (400): %s", body)
+                    logger.warning(
+                        "[%s] 画像処理不可 (400, %s, %dKB): %s",
+                        fid, mime, size_kb, body,
+                    )
                     return TagResponse(tags=[], caption="")
                 if resp.status_code != 200:
                     body = resp.text[:500]
                     last_error = f"HTTP {resp.status_code}: {body}"
                     logger.warning(
-                        "llama.cpp 呼び出し失敗 (試行 %d): HTTP %d: %s",
-                        attempt + 1, resp.status_code, body,
+                        "[%s] llama.cpp 呼び出し失敗 (試行 %d): HTTP %d: %s",
+                        fid, attempt + 1, resp.status_code, body,
                     )
                     continue
                 data = resp.json()
         except Exception as e:
             last_error = str(e)
-            logger.warning("llama.cpp 呼び出し失敗 (試行 %d): %s", attempt + 1, e)
+            logger.warning("[%s] llama.cpp 呼び出し失敗 (試行 %d): %s", fid, attempt + 1, e)
             continue
 
         response_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -217,14 +223,15 @@ async def tag_image(request: TagRequest):
         if parsed and ("tags" in parsed or "caption" in parsed):
             result = _validate_result(parsed)
             logger.info(
-                "タグ付け成功: tags=%d, caption=%d文字",
+                "[%s] タグ付け成功 (%s, %dKB): tags=%d, caption=%d文字",
+                fid, mime, size_kb,
                 len(result["tags"]),
                 len(result["caption"]),
             )
             return TagResponse(**result)
 
         last_error = f"JSONパース失敗: {response_text[:100]}"
-        logger.warning("JSONパース失敗 (試行 %d): %s", attempt + 1, response_text[:100])
+        logger.warning("[%s] JSONパース失敗 (試行 %d): %s", fid, attempt + 1, response_text[:100])
 
     raise HTTPException(
         status_code=502,
