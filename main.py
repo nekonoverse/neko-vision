@@ -1,6 +1,6 @@
-"""neko-vision: Ollama連携画像自動タグ付け/キャプション生成マイクロサービス。
+"""neko-vision: llama.cpp連携画像自動タグ付け/キャプション生成マイクロサービス。
 
-Ollama (gemma3:4b 等) を利用してアップロード画像にタグとキャプションを付与する。
+llama.cpp (gemma-4 等) を利用してアップロード画像にタグとキャプションを付与する。
 ノート本文テキストやリプライツリーをコンテキストとして渡すことで、
 固有名詞の捕捉精度が向上する。
 """
@@ -19,8 +19,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger("neko-vision")
 logging.basicConfig(level=logging.INFO)
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma3:4b")
+LLAMA_URL = os.environ.get("LLAMA_URL", "http://localhost:8080")
 MAX_RETRIES = 2
 
 # プロンプトテンプレート
@@ -50,7 +49,20 @@ _PROMPT_WITH_CONTEXT = (
     "投稿文: {text}"
 )
 
-_ollama_ok: bool = False
+_llama_ok: bool = False
+
+
+def _detect_mime(image_bytes: bytes) -> str:
+    """画像バイト列の magic bytes から MIME タイプを判定する。"""
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    if image_bytes.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    return "image/jpeg"
 
 
 def _build_prompt(text: str | None, context: list[str] | None) -> str:
@@ -108,26 +120,18 @@ def _validate_result(parsed: dict) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """起動時にOllamaへの接続を確認する。"""
-    global _ollama_ok
+    """起動時にllama.cppへの接続を確認する。"""
+    global _llama_ok
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{OLLAMA_URL}/api/tags")
+            resp = await client.get(f"{LLAMA_URL}/health")
             if resp.status_code == 200:
-                models = [m["name"] for m in resp.json().get("models", [])]
-                if any(OLLAMA_MODEL in m for m in models):
-                    _ollama_ok = True
-                    logger.info("Ollama接続OK: モデル %s 利用可能", OLLAMA_MODEL)
-                else:
-                    logger.warning(
-                        "Ollama接続OK、モデル %s が見つかりません (利用可能: %s)",
-                        OLLAMA_MODEL,
-                        models,
-                    )
+                _llama_ok = True
+                logger.info("llama.cpp 接続OK: %s", LLAMA_URL)
             else:
-                logger.warning("Ollama接続失敗: status %d", resp.status_code)
+                logger.warning("llama.cpp 接続失敗: status %d", resp.status_code)
     except Exception as e:
-        logger.warning("Ollama接続失敗: %s", e)
+        logger.warning("llama.cpp 接続失敗: %s", e)
     yield
 
 
@@ -159,28 +163,43 @@ async def tag_image(request: TagRequest):
         raise HTTPException(status_code=400, detail="不正なbase64画像データ")
 
     prompt = _build_prompt(request.text, request.context)
+    mime = _detect_mime(image_data)
+    image_url = f"data:{mime};base64,{request.image}"
     last_error = None
 
     for attempt in range(MAX_RETRIES + 1):
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(
-                    f"{OLLAMA_URL}/api/generate",
+                    f"{LLAMA_URL}/v1/chat/completions",
                     json={
-                        "model": OLLAMA_MODEL,
-                        "prompt": prompt,
-                        "images": [request.image],
-                        "stream": False,
+                        "model": "gemma4",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": prompt},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": image_url},
+                                    },
+                                ],
+                            }
+                        ],
+                        "response_format": {"type": "json_object"},
+                        # Gemma のデフォルト temperature=1.0 だと JSON 構造が崩れやすいため
+                        # 安定したタグ出力を得るために低めに設定
+                        "temperature": 0.2,
                     },
                 )
                 resp.raise_for_status()
                 data = resp.json()
         except Exception as e:
             last_error = str(e)
-            logger.warning("Ollama呼び出し失敗 (試行 %d): %s", attempt + 1, e)
+            logger.warning("llama.cpp 呼び出し失敗 (試行 %d): %s", attempt + 1, e)
             continue
 
-        response_text = data.get("response", "")
+        response_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         parsed = _parse_json_response(response_text)
 
         if parsed and ("tags" in parsed or "caption" in parsed):
@@ -206,7 +225,7 @@ async def health():
     """ヘルスチェック。"""
     return {
         "status": "ok",
-        "model": OLLAMA_MODEL,
-        "ollama_url": OLLAMA_URL,
-        "ollama_connected": _ollama_ok,
+        "backend": "llama.cpp",
+        "llama_url": LLAMA_URL,
+        "llama_connected": _llama_ok,
     }
