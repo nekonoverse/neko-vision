@@ -24,7 +24,7 @@ mkdir -p models
 
 docker run --rm -v ./models:/models python:3.12-slim bash -c \
   "pip install -q huggingface-hub && \
-   huggingface-cli download unsloth/gemma-4-E2B-it-GGUF \
+   hf download unsloth/gemma-4-E2B-it-GGUF \
      gemma-4-E2B-it-Q4_K_M.gguf \
      mmproj-gemma-4-E2B-it-BF16.gguf \
      --local-dir /models"
