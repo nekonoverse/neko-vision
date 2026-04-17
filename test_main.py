@@ -10,6 +10,7 @@ from httpx import Response
 from main import (
     _build_prompt,
     _detect_mime,
+    _ensure_jpeg_or_png,
     _parse_json_response,
     _validate_result,
     app,
@@ -127,6 +128,58 @@ def test_detect_mime_gif89a():
 
 def test_detect_mime_unknown():
     assert _detect_mime(b"\x00" * 200) == "image/jpeg"
+
+
+# --- 画像変換のテスト ---
+
+
+def test_ensure_jpeg_or_png_jpeg_passthrough():
+    data = b"\xff\xd8\xff" + b"\x00" * 100
+    result, mime = _ensure_jpeg_or_png(data, "image/jpeg")
+    assert result is data
+    assert mime == "image/jpeg"
+
+
+def test_ensure_jpeg_or_png_png_passthrough():
+    data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    result, mime = _ensure_jpeg_or_png(data, "image/png")
+    assert result is data
+    assert mime == "image/png"
+
+
+def test_ensure_jpeg_or_png_webp_converts():
+    """WebP を JPEG に変換できることを確認する。"""
+    from io import BytesIO
+
+    from PIL import Image
+
+    # テスト用の小さい WebP を生成
+    img = Image.new("RGB", (10, 10), color="red")
+    buf = BytesIO()
+    img.save(buf, format="WEBP")
+    webp_data = buf.getvalue()
+
+    result, mime = _ensure_jpeg_or_png(webp_data, "image/webp")
+    assert mime == "image/jpeg"
+    assert result != webp_data
+    # 結果が有効な JPEG であることを確認
+    assert result[:2] == b"\xff\xd8"
+
+
+def test_ensure_jpeg_or_png_gif_converts():
+    """GIF を JPEG に変換できることを確認する。"""
+    from io import BytesIO
+
+    from PIL import Image
+
+    img = Image.new("RGB", (10, 10), color="blue")
+    buf = BytesIO()
+    img.save(buf, format="GIF")
+    gif_data = buf.getvalue()
+
+    result, mime = _ensure_jpeg_or_png(gif_data, "image/gif")
+    assert mime == "image/jpeg"
+    assert result[:2] == b"\xff\xd8"
 
 
 # --- API エンドポイントのテスト ---

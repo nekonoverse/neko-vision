@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from PIL import Image
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("neko-vision")
@@ -63,6 +64,30 @@ def _detect_mime(image_bytes: bytes) -> str:
     if image_bytes.startswith((b"GIF87a", b"GIF89a")):
         return "image/gif"
     return "image/jpeg"
+
+
+def _ensure_jpeg_or_png(image_bytes: bytes, mime: str) -> tuple[bytes, str]:
+    """llama.cpp (stb_image) が非対応のフォーマットを JPEG に変換する。
+
+    stb_image は JPEG/PNG/BMP/GIF(静止) をサポートするが、
+    WebP/AVIF/アニメーションGIF は非対応。これらを JPEG に変換して返す。
+    """
+    if mime in ("image/jpeg", "image/png"):
+        return image_bytes, mime
+    try:
+        from io import BytesIO
+
+        img = Image.open(BytesIO(image_bytes))
+        img = img.convert("RGB")
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        converted = buf.getvalue()
+        logger.info("画像変換: %s → image/jpeg (%dKB → %dKB)",
+                     mime, len(image_bytes) // 1024, len(converted) // 1024)
+        return converted, "image/jpeg"
+    except Exception as e:
+        logger.warning("画像変換失敗 (%s): %s", mime, e)
+        return image_bytes, mime
 
 
 def _build_prompt(text: str | None, context: list[str] | None) -> str:
@@ -165,7 +190,9 @@ async def tag_image(request: TagRequest):
 
     prompt = _build_prompt(request.text, request.context)
     mime = _detect_mime(image_data)
-    image_url = f"data:{mime};base64,{request.image}"
+    image_data, mime = _ensure_jpeg_or_png(image_data, mime)
+    b64_str = base64.b64encode(image_data).decode("ascii")
+    image_url = f"data:{mime};base64,{b64_str}"
     fid = request.file_id or "unknown"
     size_kb = len(image_data) // 1024
     last_error = None
