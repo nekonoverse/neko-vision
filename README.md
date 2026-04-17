@@ -17,18 +17,21 @@ llama.cpp 連携画像自動タグ付け/キャプション生成マイクロサ
 
 ### 1. モデルファイルの配置
 
-`./models` ディレクトリを作成し、以下の GGUF ファイルを配置する。
+`./models` ディレクトリに GGUF ファイルをダウンロードする。ホストに Python や追加ツールをインストールせず、Docker コンテナ経由で取得できる。
 
 ```bash
 mkdir -p models
+
+# 本体 (~3.1 GB)
+docker run --rm -v ./models:/models alpine/curl -L -o /models/gemma-4-E2B-it-Q4_K_M.gguf \
+  "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf"
+
+# ビジョン projector
+docker run --rm -v ./models:/models alpine/curl -L -o /models/mmproj-gemma-4-E2B-it-BF16.gguf \
+  "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-gemma-4-E2B-it-BF16.gguf"
 ```
 
-Hugging Face からダウンロード（推奨: [unsloth/gemma-4-E2B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF)）:
-
-- **`gemma-4-E2B-it-Q4_K_M.gguf`** — 本体 (~3.1 GB)
-- **`mmproj-gemma-4-E2B-it-BF16.gguf`** — ビジョン projector
-
-> **注意**: 実際のファイル名はリポジトリにより異なる場合がある。`docker-compose.yml` の `command` 内のファイル名と一致させること。
+> **注意**: ファイル名はリポジトリにより異なる場合がある。`docker-compose.yml` の `command` 内のファイル名と実際に配置したファイル名を一致させること。
 
 ### 2. 起動
 
