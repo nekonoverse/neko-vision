@@ -5,7 +5,7 @@
 #   mkdir -p models
 #   # Download GGUF models from Hugging Face (e.g. unsloth/gemma-4-E2B-it-GGUF):
 #   #   gemma-4-E2B-it-Q4_K_M.gguf (本体, ~3.1 GB)
-#   #   mmproj-gemma-4-E2B-it-BF16.gguf (ビジョン projector)
+#   #   mmproj-BF16.gguf (ビジョン projector)
 #   # ※ファイル名はリポジトリにより異なる場合あり。command 内のパスと一致させること。
 #   docker compose up -d
 #
@@ -23,7 +23,7 @@ services:
       - ./models:/models:ro
     command: >
       -m /models/gemma-4-E2B-it-Q4_K_M.gguf
-      --mmproj /models/mmproj-gemma-4-E2B-it-BF16.gguf
+      --mmproj /models/mmproj-BF16.gguf
       --host 0.0.0.0
       --port 8080
       -c 16384
