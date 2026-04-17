@@ -192,7 +192,14 @@ async def tag_image(request: TagRequest):
                         "temperature": 0.2,
                     },
                 )
-                resp.raise_for_status()
+                if resp.status_code != 200:
+                    body = resp.text[:500]
+                    last_error = f"HTTP {resp.status_code}: {body}"
+                    logger.warning(
+                        "llama.cpp 呼び出し失敗 (試行 %d): HTTP %d: %s",
+                        attempt + 1, resp.status_code, body,
+                    )
+                    continue
                 data = resp.json()
         except Exception as e:
             last_error = str(e)
