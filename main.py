@@ -192,6 +192,11 @@ async def tag_image(request: TagRequest):
                         "temperature": 0.2,
                     },
                 )
+                if resp.status_code == 400:
+                    # 画像デコード失敗等のクライアントエラーはリトライしても無駄
+                    body = resp.text[:500]
+                    logger.warning("画像処理不可 (400): %s", body)
+                    return TagResponse(tags=[], caption="")
                 if resp.status_code != 200:
                     body = resp.text[:500]
                     last_error = f"HTTP {resp.status_code}: {body}"

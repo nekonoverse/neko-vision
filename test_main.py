@@ -238,6 +238,28 @@ async def test_tag_with_text(client):
 
 
 @pytest.mark.asyncio
+async def test_tag_400_returns_empty(client):
+    """400 (画像デコード失敗等) はリトライせず空結果を返す。"""
+    mock_resp = _make_llama_response(400, {"error": "failed to decode image bytes"})
+
+    with patch("main.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.post.return_value = mock_resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        resp = await client.post("/tag", json={"image": _make_image_base64()})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["tags"] == []
+    assert data["caption"] == ""
+    # 400 ではリトライしないので1回だけ呼ばれる
+    assert instance.post.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_tag_llama_failure(client):
     with patch("main.httpx.AsyncClient") as MockClient:
         instance = AsyncMock()
