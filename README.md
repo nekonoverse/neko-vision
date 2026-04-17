@@ -22,14 +22,15 @@ llama.cpp 連携画像自動タグ付け/キャプション生成マイクロサ
 ```bash
 mkdir -p models
 
-# 本体 (~3.1 GB)
-docker run --rm -v ./models:/models alpine/curl -L -o /models/gemma-4-E2B-it-Q4_K_M.gguf \
-  "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf"
-
-# ビジョン projector
-docker run --rm -v ./models:/models alpine/curl -L -o /models/mmproj-gemma-4-E2B-it-BF16.gguf \
-  "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-gemma-4-E2B-it-BF16.gguf"
+docker run --rm -v ./models:/models python:3.12-slim bash -c \
+  "pip install -q huggingface-hub && \
+   huggingface-cli download unsloth/gemma-4-E2B-it-GGUF \
+     gemma-4-E2B-it-Q4_K_M.gguf \
+     mmproj-gemma-4-E2B-it-BF16.gguf \
+     --local-dir /models"
 ```
+
+> `curl` では Hugging Face の LFS リダイレクトで HTML が保存される場合がある。`huggingface-cli` を使うこと。
 
 > **注意**: ファイル名はリポジトリにより異なる場合がある。`docker-compose.yml` の `command` 内のファイル名と実際に配置したファイル名を一致させること。
 
