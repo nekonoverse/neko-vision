@@ -1,4 +1,4 @@
-"""neko-vision ユニットテスト。Ollama をモックしてテストする。"""
+"""neko-vision ユニットテスト。llama.cpp をモックしてテストする。"""
 
 import base64
 from unittest.mock import AsyncMock, patch
@@ -9,6 +9,7 @@ from httpx import Response
 
 from main import (
     _build_prompt,
+    _detect_mime,
     _parse_json_response,
     _validate_result,
     app,
@@ -100,6 +101,34 @@ def test_validate_result_empty_tags_filtered():
     assert result["tags"] == ["猫", "犬"]
 
 
+# --- MIME 検出のテスト ---
+
+
+def test_detect_mime_jpeg():
+    assert _detect_mime(b"\xff\xd8\xff\xe0" + b"\x00" * 100) == "image/jpeg"
+
+
+def test_detect_mime_png():
+    assert _detect_mime(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100) == "image/png"
+
+
+def test_detect_mime_webp():
+    data = b"RIFF" + b"\x00" * 4 + b"WEBP" + b"\x00" * 100
+    assert _detect_mime(data) == "image/webp"
+
+
+def test_detect_mime_gif87a():
+    assert _detect_mime(b"GIF87a" + b"\x00" * 100) == "image/gif"
+
+
+def test_detect_mime_gif89a():
+    assert _detect_mime(b"GIF89a" + b"\x00" * 100) == "image/gif"
+
+
+def test_detect_mime_unknown():
+    assert _detect_mime(b"\x00" * 200) == "image/jpeg"
+
+
 # --- API エンドポイントのテスト ---
 
 
@@ -117,8 +146,9 @@ async def test_health(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
-    assert "model" in data
-    assert "ollama_url" in data
+    assert data["backend"] == "llama.cpp"
+    assert "llama_url" in data
+    assert "llama_connected" in data
 
 
 def _make_image_base64() -> str:
@@ -126,9 +156,9 @@ def _make_image_base64() -> str:
     return base64.b64encode(b"\x00" * 200).decode()
 
 
-def _make_ollama_response(status_code: int, json_body: dict) -> Response:
+def _make_llama_response(status_code: int, json_body: dict) -> Response:
     """raise_for_status() が動作するようにリクエスト付きのレスポンスを生成する。"""
-    request = httpx.Request("POST", "http://localhost:11434/api/generate")
+    request = httpx.Request("POST", "http://localhost:8080/v1/chat/completions")
     return Response(status_code, json=json_body, request=request)
 
 
@@ -147,10 +177,16 @@ async def test_tag_too_small_image(client):
 
 @pytest.mark.asyncio
 async def test_tag_success(client):
-    ollama_response = {
-        "response": '{"tags": ["猫", "かわいい"], "caption": "かわいい猫の写真"}'
+    llama_response = {
+        "choices": [
+            {
+                "message": {
+                    "content": '{"tags": ["猫", "かわいい"], "caption": "かわいい猫の写真"}'
+                }
+            }
+        ]
     }
-    mock_resp = _make_ollama_response(200, ollama_response)
+    mock_resp = _make_llama_response(200, llama_response)
 
     with patch("main.httpx.AsyncClient") as MockClient:
         instance = AsyncMock()
@@ -169,10 +205,16 @@ async def test_tag_success(client):
 
 @pytest.mark.asyncio
 async def test_tag_with_text(client):
-    ollama_response = {
-        "response": '{"tags": ["猫", "うちの子"], "caption": "飼い猫の写真"}'
+    llama_response = {
+        "choices": [
+            {
+                "message": {
+                    "content": '{"tags": ["猫", "うちの子"], "caption": "飼い猫の写真"}'
+                }
+            }
+        ]
     }
-    mock_resp = _make_ollama_response(200, ollama_response)
+    mock_resp = _make_llama_response(200, llama_response)
 
     with patch("main.httpx.AsyncClient") as MockClient:
         instance = AsyncMock()
@@ -187,13 +229,16 @@ async def test_tag_with_text(client):
         )
 
     assert resp.status_code == 200
-    # Ollama へのリクエストにテキストが含まれることを確認
+    # llama.cpp へのリクエストにテキストが含まれることを確認
     call_args = instance.post.call_args
-    assert "うちの猫です" in call_args.kwargs["json"]["prompt"]
+    messages = call_args.kwargs["json"]["messages"]
+    # user メッセージの text content にプロンプト（テキスト含む）があることを確認
+    text_content = messages[0]["content"][0]["text"]
+    assert "うちの猫です" in text_content
 
 
 @pytest.mark.asyncio
-async def test_tag_ollama_failure(client):
+async def test_tag_llama_failure(client):
     with patch("main.httpx.AsyncClient") as MockClient:
         instance = AsyncMock()
         instance.post.side_effect = httpx.ConnectError("connection refused")
