@@ -1,40 +1,55 @@
-# neko-vision — Ollama連携画像自動タグ付け/キャプション生成マイクロサービス
+# neko-vision — llama.cpp連携画像自動タグ付け/キャプション生成マイクロサービス
 #
 # Usage:
 #   cp docker-compose.yml.example docker-compose.yml
+#   mkdir -p models
+#   # Download GGUF models from Hugging Face (e.g. unsloth/gemma-4-E2B-it-GGUF):
+#   #   gemma-4-E2B-it-Q4_K_M.gguf (本体, ~3.1 GB)
+#   #   mmproj-gemma-4-E2B-it-BF16.gguf (ビジョン projector)
+#   # ※ファイル名はリポジトリにより異なる場合あり。command 内のパスと一致させること。
 #   docker compose up -d
-#   # Ollamaが起動したらモデルをpull:
-#   docker compose exec ollama ollama pull gemma3:4b
 #
-# Requires: NVIDIA GPU + nvidia-container-toolkit (Ollama用)
+# GPU を使う場合は llama イメージを :server-cuda に変更。
+# NVIDIA GPU + nvidia-container-toolkit が必要。
 #
 # Connect from the main Nekonoverse server:
 #   NEKO_VISION_URL=http://<this-machine>:8004/tag
 
 services:
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    # GPU を使う場合は :server-cuda に変更
+    volumes:
+      - ./models:/models:ro
+    command: >
+      -m /models/gemma-4-E2B-it-Q4_K_M.gguf
+      --mmproj /models/mmproj-gemma-4-E2B-it-BF16.gguf
+      --host 0.0.0.0
+      --port 8080
+      -c 16384
+      -np 2
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   neko-vision:
     build: .
     restart: unless-stopped
     ports:
       - "8004:8004"
     environment:
-      OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: gemma3:4b
+      LLAMA_URL: http://llama:8080
     depends_on:
-      - ollama
+      llama:
+        condition: service_healthy
+    networks:
+      - internal
+      - default
 
-  ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    volumes:
-      - ollama-data:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-volumes:
-  ollama-data:
+networks:
+  internal:
+    internal: true
